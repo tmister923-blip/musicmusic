@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder
 const { joinVoiceChannel } = require('@discordjs/voice');
 const { Riffy } = require('riffy');
 require('dotenv').config();
+const http = require('http');
 
 const client = new Client({
     intents: [
@@ -333,3 +334,11 @@ if (!lavalinkConfig.host || !lavalinkConfig.password) {
 }
 
 client.login(TOKEN);
+
+const port = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is running');
+}).listen(port, () => {
+    console.log(`HTTP server listening on port ${port}`);
+});
