@@ -59,6 +59,57 @@ riffy.on('queueEnd', async (player) => {
     }
 });
 
+// Auto-reconnect configuration
+const AUTO_RECONNECT_CHANNEL_ID = '1430146373365272576';
+const RECONNECT_DELAY = 15000; // 15 seconds
+
+// Auto-reconnect functionality
+const autoReconnectToChannel = async (guildId) => {
+    try {
+        const guild = client.guilds.cache.get(guildId);
+        if (!guild) return;
+
+        const channel = guild.channels.cache.get(AUTO_RECONNECT_CHANNEL_ID);
+        if (!channel) return;
+
+        // Check if bot is already in the channel
+        const botMember = guild.members.cache.get(client.user.id);
+        if (botMember?.voice?.channelId === AUTO_RECONNECT_CHANNEL_ID) {
+            return; // Already in the target channel
+        }
+
+        console.log(`Auto-reconnecting to channel ${AUTO_RECONNECT_CHANNEL_ID} in guild ${guildId}`);
+        
+        // Create or get existing player
+        let player = riffy.players.get(guildId);
+        if (!player) {
+            player = riffy.createConnection({
+                guildId: guildId,
+                voiceChannel: AUTO_RECONNECT_CHANNEL_ID,
+                textChannel: AUTO_RECONNECT_CHANNEL_ID,
+                deaf: true
+            });
+        } else {
+            // Update existing player to reconnect to the channel
+            player.voiceChannel = AUTO_RECONNECT_CHANNEL_ID;
+            player.textChannel = AUTO_RECONNECT_CHANNEL_ID;
+        }
+
+        // Enable stay connected mode
+        stayConnectedGuilds.set(guildId, true);
+        
+    } catch (error) {
+        console.error('Auto-reconnect error:', error);
+    }
+};
+
+// Track disconnections and schedule reconnects
+const scheduleReconnect = (guildId) => {
+    setTimeout(() => {
+        autoReconnectToChannel(guildId);
+    }, RECONNECT_DELAY);
+};
+
 // Processing flag to prevent spam
 let processing = new Map();
 const musicPanels = new Map();
@@ -191,6 +242,35 @@ client.once('ready', async () => {
     // Init Riffy
     riffy.init(client.user.id);
     console.log('Riffy initialized');
+    
+    // Auto-connect to the specified channel on startup
+    const guilds = client.guilds.cache;
+    for (const [guildId, guild] of guilds) {
+        const channel = guild.channels.cache.get(AUTO_RECONNECT_CHANNEL_ID);
+        if (channel) {
+            console.log(`Found target channel in guild ${guildId}, connecting...`);
+            await autoReconnectToChannel(guildId);
+            break; // Only connect to the first guild that has the target channel
+        }
+    }
+});
+
+// Listen for voice state updates to detect disconnections
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    // Check if it's the bot's voice state that changed
+    if (oldState.member.id !== client.user.id) return;
+    
+    // If bot was in a voice channel and now isn't, schedule reconnect
+    if (oldState.channelId && !newState.channelId) {
+        console.log(`Bot disconnected from voice channel ${oldState.channelId} in guild ${oldState.guild.id}`);
+        scheduleReconnect(oldState.guild.id);
+    }
+});
+
+// Listen for player disconnections
+riffy.on('playerDisconnect', (player) => {
+    console.log(`Player disconnected from guild ${player.guildId}`);
+    scheduleReconnect(player.guildId);
 });
 
 client.on('messageCreate', async (message) => {
@@ -199,7 +279,7 @@ client.on('messageCreate', async (message) => {
     const guildId = message.guild.id;
     const configuredChannelId = guildChannelConfig.get(guildId);
 
-    if (message.content === '!set_channel') {
+    if (message.content === '!set_panda') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
             return message.reply('You need Manage Server permission to set the music channel.').then((msg) => {
                 setTimeout(() => msg.delete().catch(() => null), 5000);
